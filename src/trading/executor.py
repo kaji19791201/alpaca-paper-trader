@@ -5,7 +5,7 @@ from alpaca.trading.requests import (
     StopLossRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
-from alpaca.data.requests import StockLatestQuoteRequest
+from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.data.enums import DataFeed
 from .broker import trading, data
 from . import config
@@ -16,10 +16,10 @@ def buy(symbol: str, qty: int):
         logger.warning(f"{symbol}: qty={qty} で注文スキップ")
         return None
 
-    q = data.get_stock_latest_quote(
-        StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
+    t = data.get_stock_latest_trade(
+        StockLatestTradeRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
     )[symbol]
-    price = float(q.ask_price) or float(q.bid_price)
+    price = float(t.price)
 
     take_profit = round(price * (1 + config.TAKE_PROFIT_PCT), 2)
     stop_loss = round(price * (1 - config.STOP_LOSS_PCT), 2)
