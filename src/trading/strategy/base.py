@@ -5,7 +5,7 @@ import pandas as pd
 
 
 class Signal(Enum):
-    BUY  = "buy"
+    BUY = "buy"
     SELL = "sell"
     HOLD = "hold"
 
@@ -19,5 +19,4 @@ class StrategyResult:
 
 class BaseStrategy(ABC):
     @abstractmethod
-    def generate(self, symbol: str, df: pd.DataFrame) -> StrategyResult:
-        ...
+    def generate(self, symbol: str, df: pd.DataFrame) -> StrategyResult: ...

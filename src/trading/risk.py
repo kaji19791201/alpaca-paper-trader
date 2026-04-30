@@ -2,7 +2,7 @@ from loguru import logger
 from alpaca.data.requests import StockLatestQuoteRequest
 from alpaca.data.enums import DataFeed
 from . import config
-from . broker import trading, data
+from .broker import trading, data
 
 
 def _latest_ask(symbol: str) -> float:
@@ -33,8 +33,11 @@ def can_open(symbol: str) -> tuple[bool, str]:
 
     acct = trading.get_account()
     daily_pl = float(acct.equity) - float(acct.last_equity)
-    if daily_pl < 0 and abs(daily_pl) / float(acct.last_equity) >= config.MAX_DAILY_LOSS:
-        return False, f"日次損失上限({config.MAX_DAILY_LOSS*100:.0f}%)に達している"
+    if (
+        daily_pl < 0
+        and abs(daily_pl) / float(acct.last_equity) >= config.MAX_DAILY_LOSS
+    ):
+        return False, f"日次損失上限({config.MAX_DAILY_LOSS * 100:.0f}%)に達している"
 
     return True, "OK"
 

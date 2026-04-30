@@ -6,7 +6,9 @@ from alpaca.data.enums import DataFeed
 from . import broker
 
 
-def get_bars(symbol: str, days: int = 60, timeframe: TimeFrame = TimeFrame.Day) -> pd.DataFrame:
+def get_bars(
+    symbol: str, days: int = 60, timeframe: TimeFrame = TimeFrame.Day
+) -> pd.DataFrame:
     end = datetime.now()
     start = end - timedelta(days=days)
     req = StockBarsRequest(
