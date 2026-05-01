@@ -11,13 +11,13 @@ def _latest_ask(symbol: str) -> float:
     return float(q.ask_price) or float(q.bid_price)
 
 
-def position_size(symbol: str) -> int:
-    """口座残高の POSITION_SIZE_PCT 分の株数を返す（端数切り捨て）"""
+def position_size(symbol: str) -> float:
+    """口座残高の POSITION_SIZE_PCT 分の株数を返す（フラクショナルシェア対応）"""
     acct = trading.get_account()
     budget = float(acct.equity) * config.POSITION_SIZE_PCT
     price = _latest_ask(symbol)
-    qty = int(budget / price)
-    logger.debug(f"{symbol}: budget=${budget:.0f}, price=${price:.2f}, qty={qty}")
+    qty = round(budget / price, 6)
+    logger.debug(f"{symbol}: budget=${budget:.2f}, price=${price:.2f}, qty={qty}")
     return qty
 
 

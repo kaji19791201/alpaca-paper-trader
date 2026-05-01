@@ -1,28 +1,15 @@
 from loguru import logger
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    TakeProfitRequest,
-    StopLossRequest,
-)
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
-from alpaca.data.requests import StockLatestTradeRequest
-from alpaca.data.enums import DataFeed
-from .broker import trading, data
+from alpaca.trading.requests import MarketOrderRequest, TrailingStopOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from .broker import trading
 from . import config
 
 
-def buy(symbol: str, qty: int):
+def buy(symbol: str, qty: float):
+    """成行BUY → 直後にトレーリングストップSELLを設定"""
     if qty <= 0:
         logger.warning(f"{symbol}: qty={qty} で注文スキップ")
         return None
-
-    t = data.get_stock_latest_trade(
-        StockLatestTradeRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
-    )[symbol]
-    price = float(t.price)
-
-    take_profit = round(price * (1 + config.TAKE_PROFIT_PCT), 2)
-    stop_loss = round(price * (1 - config.STOP_LOSS_PCT), 2)
 
     order = trading.submit_order(
         MarketOrderRequest(
@@ -30,29 +17,49 @@ def buy(symbol: str, qty: int):
             qty=qty,
             side=OrderSide.BUY,
             time_in_force=TimeInForce.DAY,
-            order_class=OrderClass.BRACKET,
-            take_profit=TakeProfitRequest(limit_price=take_profit),
-            stop_loss=StopLossRequest(stop_price=stop_loss),
         )
     )
-    logger.info(f"BUY {symbol} x{qty}  TP=${take_profit} SL=${stop_loss}  [{order.id}]")
+    logger.info(f"BUY {symbol} x{qty}  [{order.id}]")
+
+    # トレーリングストップを別注文で設定（GTC）
+    ts_order = trading.submit_order(
+        TrailingStopOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,
+            trail_percent=config.TRAILING_STOP_PCT,
+        )
+    )
+    logger.info(
+        f"TrailingStop {symbol} x{qty}  trail={config.TRAILING_STOP_PCT}%  [{ts_order.id}]"
+    )
     return order
 
 
 def sell(symbol: str):
+    """シグナルによる手動売却（オープンなトレーリングストップをキャンセルしてから成行売り）"""
     positions = trading.get_all_positions()
     pos = next((p for p in positions if p.symbol == symbol), None)
     if not pos:
         logger.warning(f"{symbol}: ポジションなし、売りスキップ")
         return None
 
+    # 同銘柄のオープン注文（trailing stop等）をキャンセル
+    open_orders = trading.get_orders()
+    for o in open_orders:
+        if o.symbol == symbol and o.side == OrderSide.SELL:
+            trading.cancel_order_by_id(str(o.id))
+            logger.info(f"キャンセル: {o.id} ({symbol} SELL)")
+
+    qty = abs(float(pos.qty))
     order = trading.submit_order(
         MarketOrderRequest(
             symbol=symbol,
-            qty=abs(float(pos.qty)),
+            qty=qty,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.DAY,
         )
     )
-    logger.info(f"SELL {symbol} x{pos.qty}  [{order.id}]")
+    logger.info(f"SELL {symbol} x{qty}  [{order.id}]")
     return order

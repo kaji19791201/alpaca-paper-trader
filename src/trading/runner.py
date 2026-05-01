@@ -3,13 +3,17 @@
 from loguru import logger
 from . import config
 from .data import get_bars
-from .strategy.ma_cross import MACrossStrategy
+from .strategy.ema_rsi import EmaRsiStrategy
 from .strategy.base import Signal
 from . import risk, executor
 
 
 def run_once(dry_run: bool = False):
-    strategy = MACrossStrategy()
+    strategy = EmaRsiStrategy(
+        short=config.EMA_SHORT,
+        long=config.EMA_LONG,
+        rsi_period=config.RSI_PERIOD,
+    )
     logger.info(f"=== スキャン開始 ({len(config.UNIVERSE)}銘柄) dry_run={dry_run} ===")
 
     for symbol in config.UNIVERSE:
@@ -29,6 +33,9 @@ def run_once(dry_run: bool = False):
                     logger.info(f"{symbol}: BUYスキップ → {reason}")
                     continue
                 qty = risk.position_size(symbol)
+                if qty <= 0:
+                    logger.warning(f"{symbol}: qty={qty} で注文スキップ")
+                    continue
                 if not dry_run:
                     executor.buy(symbol, qty)
                 else:

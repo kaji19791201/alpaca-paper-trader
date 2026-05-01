@@ -1,8 +1,10 @@
-"""SMAクロス戦略バックテスト
+"""バックテスト
 使い方:
   dotenvx run -- uv run python scripts/backtest.py
   dotenvx run -- uv run python scripts/backtest.py --start 2023-01-01 --end 2024-12-31
   dotenvx run -- uv run python scripts/backtest.py --symbols AAPL MSFT NVDA
+  dotenvx run -- uv run python scripts/backtest.py --strategy ema_rsi
+  dotenvx run -- uv run python scripts/backtest.py --compare   # 全戦略を比較
 """
 
 import sys
@@ -49,20 +51,43 @@ def fetch_bars(symbols: list[str], start: date, end: date) -> dict[str, pd.DataF
     return result
 
 
-def run_backtest(symbols: list[str], start: date, end: date) -> dict:
+def _load_strategy(name: str):
+    if name == "ma_cross":
+        from trading.strategy.ma_cross import MACrossStrategy
+
+        return MACrossStrategy()
+    if name == "ema_rsi":
+        from trading.strategy.ema_rsi import EmaRsiStrategy
+
+        return EmaRsiStrategy()
+    raise ValueError(f"不明な戦略: {name}")
+
+
+def run_backtest(
+    symbols: list[str],
+    start: date,
+    end: date,
+    strategy_name: str = "ma_cross",
+    trailing_stop: float | None = None,
+) -> dict:
     from trading import config
-    from trading.strategy.ma_cross import MACrossStrategy
     from trading.strategy.base import Signal
 
-    logger.info(f"バックテスト開始: {start} 〜 {end}  銘柄数={len(symbols)}")
+    exit_mode = (
+        f"trailing-{trailing_stop * 100:.0f}%" if trailing_stop else "fixed-TP/SL"
+    )
+    label = f"{strategy_name}+{exit_mode}"
+    logger.info(
+        f"バックテスト開始: {start} 〜 {end}  銘柄数={len(symbols)}  戦略={label}"
+    )
     bars = fetch_bars(symbols, start, end)
     if not bars:
         raise RuntimeError("取得できたデータが0銘柄")
 
-    strategy = MACrossStrategy()
+    strategy = _load_strategy(strategy_name)
     equity = INITIAL_EQUITY
     cash = INITIAL_EQUITY
-    positions: dict[str, dict] = {}  # symbol -> {qty, entry_price}
+    positions: dict[str, dict] = {}  # symbol -> {qty, entry_price, peak_price}
 
     all_dates = sorted(
         set(
@@ -91,23 +116,46 @@ def run_backtest(symbols: list[str], start: date, end: date) -> dict:
                 continue
             close = float(day_data["close"].iloc[-1])
 
-            tp = pos["entry_price"] * (1 + config.TAKE_PROFIT_PCT)
-            sl = pos["entry_price"] * (1 - config.STOP_LOSS_PCT)
-            if close >= tp or close <= sl:
-                pnl = (close - pos["entry_price"]) * pos["qty"]
-                cash += close * pos["qty"]
-                trades.append(
-                    {
-                        "symbol": sym,
-                        "entry": pos["entry_price"],
-                        "exit": close,
-                        "qty": pos["qty"],
-                        "pnl": pnl,
-                        "date": day_str,
-                        "reason": "TP/SL",
-                    }
+            if trailing_stop is not None:
+                # トレーリングストップ: 峰値を更新しながら峰値から下落したら撤退
+                if close > pos.get("peak_price", pos["entry_price"]):
+                    pos["peak_price"] = close
+                trail_sl = pos.get("peak_price", pos["entry_price"]) * (
+                    1 - trailing_stop
                 )
-                del positions[sym]
+                if close <= trail_sl:
+                    pnl = (close - pos["entry_price"]) * pos["qty"]
+                    cash += close * pos["qty"]
+                    trades.append(
+                        {
+                            "symbol": sym,
+                            "entry": pos["entry_price"],
+                            "exit": close,
+                            "qty": pos["qty"],
+                            "pnl": pnl,
+                            "date": day_str,
+                            "reason": "TrailSL",
+                        }
+                    )
+                    del positions[sym]
+            else:
+                tp = pos["entry_price"] * (1 + config.TAKE_PROFIT_PCT)
+                sl = pos["entry_price"] * (1 - config.STOP_LOSS_PCT)
+                if close >= tp or close <= sl:
+                    pnl = (close - pos["entry_price"]) * pos["qty"]
+                    cash += close * pos["qty"]
+                    trades.append(
+                        {
+                            "symbol": sym,
+                            "entry": pos["entry_price"],
+                            "exit": close,
+                            "qty": pos["qty"],
+                            "pnl": pnl,
+                            "date": day_str,
+                            "reason": "TP/SL",
+                        }
+                    )
+                    del positions[sym]
 
         for sym, df in bars.items():
             idx_dates = [i.date() if hasattr(i, "date") else i for i in df.index]
@@ -206,6 +254,7 @@ def run_backtest(symbols: list[str], start: date, end: date) -> dict:
         sharpe = float("nan")
 
     return {
+        "strategy": label,
         "start": start,
         "end": end,
         "initial_equity": INITIAL_EQUITY,
@@ -223,7 +272,7 @@ def run_backtest(symbols: list[str], start: date, end: date) -> dict:
 
 def print_report(r: dict):
     print(f"\n{'=' * 55}")
-    print("  バックテスト結果")
+    print(f"  バックテスト結果 [{r.get('strategy', '?')}]")
     print(f"  期間: {r['start']} 〜 {r['end']}")
     print(f"{'=' * 55}")
     print(f"  初期資産         : ${r['initial_equity']:>12,.2f}")
@@ -254,8 +303,32 @@ def print_report(r: dict):
         print()
 
 
+def print_comparison(results: list[dict]):
+    headers = ["戦略", "リターン", "勝率", "取引数", "最大DD", "シャープ"]
+    print(f"\n{'=' * 65}")
+    print("  戦略比較")
+    print(f"{'=' * 65}")
+    fmt = "  {:<12} {:>8} {:>7} {:>6} {:>8} {:>8}"
+    print(fmt.format(*headers))
+    print(f"  {'-' * 62}")
+    for r in results:
+        sr = r["sharpe"]
+        sr_str = f"{sr:.2f}" if not math.isnan(sr) else "N/A"
+        print(
+            fmt.format(
+                r.get("strategy", "?"),
+                f"{r['total_return_pct']:+.2f}%",
+                f"{r['win_rate']:.1f}%",
+                str(r["num_trades"]),
+                f"{r['max_drawdown_pct']:.2f}%",
+                sr_str,
+            )
+        )
+    print(f"{'=' * 65}\n")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="SMAクロス戦略バックテスト")
+    parser = argparse.ArgumentParser(description="バックテスト")
     parser.add_argument("--start", default="2023-01-01", help="開始日 (YYYY-MM-DD)")
     parser.add_argument("--end", default="2024-12-31", help="終了日 (YYYY-MM-DD)")
     parser.add_argument(
@@ -263,6 +336,24 @@ def main():
         nargs="+",
         default=None,
         help="対象銘柄（省略時は config.UNIVERSE 全銘柄）",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="ma_cross",
+        choices=["ma_cross", "ema_rsi"],
+        help="使用する戦略",
+    )
+    parser.add_argument(
+        "--trailing-stop",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="トレーリングストップ率 (例: 0.10 = 10%%)",
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="複数設定を比較する",
     )
     args = parser.parse_args()
 
@@ -272,8 +363,23 @@ def main():
     end = date.fromisoformat(args.end)
     symbols = args.symbols or config.UNIVERSE
 
-    result = run_backtest(symbols, start, end)
-    print_report(result)
+    if args.compare:
+        # fixed TP/SL vs trailing stop 10% / 15% の4パターン比較
+        combos = [
+            ("ma_cross", None),
+            ("ma_cross", 0.10),
+            ("ema_rsi", None),
+            ("ema_rsi", 0.10),
+        ]
+        results = []
+        for strategy, ts in combos:
+            result = run_backtest(symbols, start, end, strategy, ts)
+            print_report(result)
+            results.append(result)
+        print_comparison(results)
+    else:
+        result = run_backtest(symbols, start, end, args.strategy, args.trailing_stop)
+        print_report(result)
 
 
 if __name__ == "__main__":
