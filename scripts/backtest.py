@@ -58,8 +58,9 @@ def _load_strategy(name: str):
         return MACrossStrategy()
     if name == "ema_rsi":
         from trading.strategy.ema_rsi import EmaRsiStrategy
+        from trading import config
 
-        return EmaRsiStrategy()
+        return EmaRsiStrategy(short=config.EMA_SHORT, long=config.EMA_LONG)
     raise ValueError(f"不明な戦略: {name}")
 
 
