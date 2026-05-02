@@ -7,10 +7,11 @@
   dotenvx run -- uv run python scripts/update_universe.py
 """
 
+import argparse
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 from alpaca.data.enums import DataFeed
@@ -272,7 +273,22 @@ def append_change_log(
         f.write(entry)
 
 
+def is_first_monday() -> bool:
+    today = date.today()
+    return today.weekday() == 0 and today.day <= 7
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--force", action="store_true", help="月初第1月曜チェックをスキップ"
+    )
+    args = parser.parse_args()
+
+    if not args.force and not is_first_monday():
+        print("skip: 月初第1月曜ではありません")
+        sys.exit(0)
+
     print("[update_universe] スコアリング開始...")
 
     # SPY を先に取得
