@@ -26,6 +26,12 @@ INITIAL_EQUITY = 100_000.0
 
 def fetch_bars(symbols: list[str], start: date, end: date) -> dict[str, pd.DataFrame]:
     from trading import broker
+    from trading.data import IEX_EARLIEST
+
+    if start < IEX_EARLIEST:
+        logger.warning(
+            f"IEX無料フィードは {IEX_EARLIEST} 以降のみ取得可。start={start} は一部データが欠損する可能性あり"
+        )
 
     req = StockBarsRequest(
         symbol_or_symbols=symbols,

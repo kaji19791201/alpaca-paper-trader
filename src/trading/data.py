@@ -1,9 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pandas as pd
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
+from loguru import logger
 from . import broker
+
+IEX_EARLIEST = date(2020, 1, 1)
 
 
 def get_bars(
@@ -11,6 +14,10 @@ def get_bars(
 ) -> pd.DataFrame:
     end = datetime.now()
     start = end - timedelta(days=days)
+    if start.date() < IEX_EARLIEST:
+        logger.warning(
+            f"{symbol}: start={start.date()} は IEX_EARLIEST({IEX_EARLIEST}) より古い。データ欠損の可能性あり"
+        )
     req = StockBarsRequest(
         symbol_or_symbols=symbol,
         timeframe=timeframe,
@@ -23,4 +30,8 @@ def get_bars(
     if isinstance(df.index, pd.MultiIndex):
         df = df.xs(symbol, level="symbol")
     df = df.sort_index()
+    if len(df) == 0:
+        logger.warning(
+            f"{symbol}: データが0件。IEX無料フィードの制限か銘柄コードが無効な可能性あり"
+        )
     return df

@@ -19,6 +19,9 @@ def run_once(dry_run: bool = False):
     for symbol in config.UNIVERSE:
         try:
             df = get_bars(symbol, days=120)
+            if len(df) < config.EMA_LONG + 2:
+                logger.warning(f"{symbol}: データ不足 ({len(df)}行) スキップ")
+                continue
             result = strategy.generate(symbol, df)
 
             if result.signal == Signal.HOLD:
